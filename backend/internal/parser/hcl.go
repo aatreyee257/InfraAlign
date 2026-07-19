@@ -19,7 +19,7 @@ func ParseBlueprint(dir string) (*BucketConfig, error) {
 	config := &BucketConfig{}
 
 	for  _, resource := range module.ManagedResources {
-		if resource.Type == "aws_S3_bucket" {
+		if resource.Type == "aws_s3_bucket" {
 			config.BucketName = resource.Name
 		}
 
