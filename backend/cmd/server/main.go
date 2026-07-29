@@ -6,6 +6,7 @@ import (
 	
 	myaws "infraalign/backend/internal/aws"
 	"infraalign/backend/internal/parser"
+	"infraalign/backend/internal/drift"
 )
 
 func main(){
@@ -27,5 +28,13 @@ func main(){
     fmt.Println("--- Actual State (AWS) ---")
     for _, b := range reality {
         fmt.Printf("Bucket: %s | Encrypted: %v\n", b.BucketName, b.IsEncrypted)
+    }
+
+	differences := drift.DetectDrift(blueprint, reality)
+
+    fmt.Println("--- Drift Report ---")
+    for _, d := range differences {
+        fmt.Printf("Bucket: %s | Status: %s | Attribute: %s | Expected: %s | Actual: %s\n",
+            d.BucketName, d.Status, d.AttributeName, d.ExpectedVal, d.ActualVal)
     }
 }
