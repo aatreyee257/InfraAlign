@@ -10,23 +10,39 @@ type BucketConfig struct {
 	IsEncrypted bool
 }
 
-func ParseBlueprint(dir string) (*BucketConfig, error) {
+func ParseBlueprint(dir string) ([]BucketConfig, error) {
 	module,diags := tfconfig.LoadModule(dir)
 	if diags.HasErrors() {
-		return nil, fmt.Errorf("failed to parse terraform: %s", diags.Error())
+		return nil, fmt.Errorf("Failed to parse terraform: %s", diags.Error())
 	}
 
-	config := &BucketConfig{}
+	//internal map to hold bucket configs
+	bucketMap := map[string]*BucketConfig{}
 
-	for  _, resource := range module.ManagedResources {
+	//find all aws_s3_bucket resources and add them to the map
+	for _,resource := range module.ManagedResources {
 		if resource.Type == "aws_s3_bucket" {
-			config.BucketName = resource.Name
+			bucketMap[resource.Name] = &BucketConfig{
+				BucketName: resource.Name,
+				IsEncrypted: false,
+			}
 		}
-
-		if resource.Type == "aws_s3_bucket_server_side_encryption_configuration" {
-			config.IsEncrypted = true
-		}
-
 	}
-	return config, nil
+
+	//find encryption blocks and update matching buckets
+	for _, resource := range module.ManagedResources {
+		if resource.Type == "aws_s3_bucket_server_side_encryption_configuration" {
+			if  entry, exists := bucketMap[resource.Name];exists {
+				entry.IsEncrypted = true
+			}
+		}
+	}
+
+	//converting map to slice
+	var buckets []BucketConfig
+	for _,entry := range bucketMap {
+		buckets = append(buckets, *entry)
+	}
+	
+	return buckets, nil
 }
