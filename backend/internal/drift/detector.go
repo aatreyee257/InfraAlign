@@ -24,9 +24,9 @@ const (
 	Missing Status = "missing_in_cloud"
 )
 
-func DetectDrift(blueprints []parser.BucketConfig, reality []aws.BucketConfig) []Difference {
+func DetectDrift(blueprints []parser.BucketConfig, reality []myaws.BucketConfig) []Difference {
 	//convert reality slice to map for easier lookup
-	realityMap := map[string]aws.BucketConfig{}
+	realityMap := map[string]myaws.BucketConfig{}
 	for _, b := range reality {
 		realityMap[b.BucketName] = b
 	}
@@ -34,10 +34,9 @@ func DetectDrift(blueprints []parser.BucketConfig, reality []aws.BucketConfig) [
 	//loop through blueprints and compare with reality
 	var differences []Difference
 	for _,blueprint := range blueprints {
-		realBucket := realityMap[blueprint.BucketName]
-	}
-
-	if !exists {
+		realBucket, exists := realityMap[blueprint.BucketName]
+		
+		if !exists {
             // Scenario A: bucket in terraform but missing in AWS
             differences = append(differences, Difference{
                 BucketName:    blueprint.BucketName,
@@ -65,6 +64,8 @@ func DetectDrift(blueprints []parser.BucketConfig, reality []aws.BucketConfig) [
                 ActualVal:     fmt.Sprintf("%v", realBucket.IsEncrypted),
             })
 		}
+	}
+	
 	return differences
 
 }
