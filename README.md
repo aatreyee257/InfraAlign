@@ -156,6 +156,4 @@ terraform-samples/
 - [ ] Automated tests for `DetectDrift` and HCL reference resolution
 - [ ] Support for additional AWS resource types beyond S3
 
-## License
 
-Not yet decided.
