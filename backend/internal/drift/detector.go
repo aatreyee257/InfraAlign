@@ -8,13 +8,12 @@ import (
 )
 
 type Difference struct {
-	BucketName string
-	Status Status
-	AttributeName string // holds "ServerSideEncryption", "Versioning", "BucketPolicy" etc.
-	ExpectedVal string
-	ActualVal string
-    Check Check
-	
+	BucketName string `json:"bucket_name"`
+	Status Status `json:"status"`
+	AttributeName string `json:"attribute_name"` // holds "ServerSideEncryption", "Versioning", "BucketPolicy" etc.
+	ExpectedVal string `json:"expected_val"`
+	ActualVal string `json:"actual_val"`
+    Check Check `json:"-"`
 }
 
 type Check interface {
@@ -34,6 +33,27 @@ func (c EncryptionCheck) Desired(b parser.BucketConfig) string {  return fmt.Spr
 func (c EncryptionCheck) Actual(r myaws.BucketConfig) string { return fmt.Sprintf("%v", r.IsEncrypted) }
 func (c EncryptionCheck) Remediate(bucketName string) error {return myaws.EnableServerEncryption(bucketName)}
 type Status string
+
+type VersioningCheck struct{}
+
+func (c VersioningCheck) Name() string { return "Versioning" }
+
+func (c VersioningCheck) Desired(b parser.BucketConfig) string {
+	return fmt.Sprintf("%v", b.IsVersioned)
+}
+
+func (c VersioningCheck) Actual(r myaws.BucketConfig) string {
+	return fmt.Sprintf("%v", r.IsVersioned)
+}
+
+func (c VersioningCheck) Remediate(bucketName string) error {
+	return myaws.EnableVersioning(bucketName)
+}
+
+// DefaultChecks is the single place the active checks are registered.
+func DefaultChecks() []Check {
+	return []Check{EncryptionCheck{}, VersioningCheck{}}
+}
 
 const (
 	Compliant Status = "compliant"

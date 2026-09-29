@@ -9,9 +9,16 @@ import (
 	"infraalign/backend/internal/drift"
 	"infraalign/backend/internal/notifier"
 	"infraalign/backend/internal/parser"
+	"infraalign/backend/internal/api"
 )
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "serve" {
+		if err := api.Start(":8080"); err != nil {
+			log.Fatalf("server failed: %v", err)
+		}
+		return
+	}
 	blueprint, err := parser.ParseBlueprint("terraform-samples")
 	if err != nil {
 		log.Fatalf("Failed to parse blueprint: %v", err)
@@ -32,7 +39,7 @@ func main() {
 		fmt.Printf("Bucket: %s | Encrypted: %v\n", b.BucketName, b.IsEncrypted)
 	}
 
-	differences := drift.DetectDrift(blueprint, reality, []drift.Check{drift.EncryptionCheck{}})
+	differences := drift.DetectDrift(blueprint, reality, drift.DefaultChecks())
 
 	fmt.Println("--- Drift Report ---")
 	for _, d := range differences {

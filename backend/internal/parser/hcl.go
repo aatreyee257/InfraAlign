@@ -2,115 +2,182 @@ package parser
 
 import (
 	"fmt"
-	"github.com/hashicorp/terraform-config-inspect/tfconfig"
+	"sort"
+
 	"github.com/hashicorp/hcl/v2"
-    "github.com/hashicorp/hcl/v2/hclparse"
+	"github.com/hashicorp/hcl/v2/hclparse"
+	"github.com/hashicorp/terraform-config-inspect/tfconfig"
+	"github.com/zclconf/go-cty/cty"
 )
 
 type BucketConfig struct {
-	BucketName string
+	BucketName  string // the REAL AWS bucket name (from the `bucket = "..."` attribute)
 	IsEncrypted bool
+	IsVersioned bool
 }
 
-//given a .tf file path and the resource block's name, find its bucket.
-func resolveBucketReference(filePath string, blockName string) (string,error) {
-	parser := hclparse.NewParser()
-	file, diags := parser.ParseHCLFile(filePath)
+// findResourceBlock parses one .tf file and returns the resource block
+// with the given type and name.
+func findResourceBlock(filePath, resourceType, blockName string) (*hcl.Block, error) {
+	file, diags := hclparse.NewParser().ParseHCLFile(filePath)
+	if diags.HasErrors() {
+		return nil, diags
+	}
+
+	schema := &hcl.BodySchema{
+		Blocks: []hcl.BlockHeaderSchema{
+			{Type: "resource", LabelNames: []string{"type", "name"}},
+		},
+	}
+	// PartialContent: ignore provider/terraform/variable blocks etc.
+	content, _, diags := file.Body.PartialContent(schema)
+	if diags.HasErrors() {
+		return nil, diags
+	}
+
+	for _, block := range content.Blocks {
+		if block.Labels[0] == resourceType && block.Labels[1] == blockName {
+			return block, nil
+		}
+	}
+	return nil, fmt.Errorf("resource %s.%s not found in %s", resourceType, blockName, filePath)
+}
+
+// bucketReference reads `bucket = aws_s3_bucket.X.id` and returns "X"
+// (the Terraform label of the bucket this block points at).
+func bucketReference(block *hcl.Block) (string, error) {
+	content, _, diags := block.Body.PartialContent(&hcl.BodySchema{
+		Attributes: []hcl.AttributeSchema{{Name: "bucket", Required: true}},
+	})
 	if diags.HasErrors() {
 		return "", diags
 	}
 
-	//Step 1: Describe the shape
-	schema := &hcl.BodySchema{
-    Blocks: []hcl.BlockHeaderSchema{
-        {
-            Type:       "resource",
-            LabelNames: []string{"type", "name"},
-        },
-    },
+	traversal, diags := hcl.AbsTraversalForExpr(content.Attributes["bucket"].Expr)
+	if diags.HasErrors() {
+		return "", diags
+	}
+	if len(traversal) < 2 {
+		return "", fmt.Errorf("unexpected bucket reference in %s.%s", block.Labels[0], block.Labels[1])
+	}
+	attr, ok := traversal[1].(hcl.TraverseAttr)
+	if !ok {
+		return "", fmt.Errorf("unexpected bucket reference shape in %s.%s", block.Labels[0], block.Labels[1])
+	}
+	return attr.Name, nil
 }
 
-content, diags := file.Body.Content(schema)
-if diags.HasErrors() {
-    return "", diags
+// literalBucketName reads `bucket = "my-tf-demo-bucket"` from an aws_s3_bucket block.
+func literalBucketName(block *hcl.Block) (string, error) {
+	content, _, diags := block.Body.PartialContent(&hcl.BodySchema{
+		Attributes: []hcl.AttributeSchema{{Name: "bucket", Required: true}},
+	})
+	if diags.HasErrors() {
+		return "", diags
+	}
+
+	val, diags := content.Attributes["bucket"].Expr.Value(nil)
+	if diags.HasErrors() {
+		return "", fmt.Errorf("bucket name for aws_s3_bucket.%s must be a literal string: %w", block.Labels[1], diags)
+	}
+	if val.Type() != cty.String {
+		return "", fmt.Errorf("bucket name for aws_s3_bucket.%s must be a string", block.Labels[1])
+	}
+	return val.AsString(), nil
 }
 
-	// Step 2: walk the resource blocks it found, and pick out the one
-    // matching our type + name.
-    for _, block := range content.Blocks {
-        resourceType := block.Labels[0] // e.g. "aws_s3_bucket_server_side_encryption_configuration"
-        resourceName := block.Labels[1] // e.g. "mybucket"
+// versioningStatus reads versioning_configuration { status = "Enabled" }.
+func versioningStatus(block *hcl.Block) (string, error) {
+	content, _, diags := block.Body.PartialContent(&hcl.BodySchema{
+		Blocks: []hcl.BlockHeaderSchema{{Type: "versioning_configuration"}},
+	})
+	if diags.HasErrors() {
+		return "", diags
+	}
+	if len(content.Blocks) == 0 {
+		return "", fmt.Errorf("no versioning_configuration block in aws_s3_bucket_versioning.%s", block.Labels[1])
+	}
 
-        if resourceType == "aws_s3_bucket_server_side_encryption_configuration" && resourceName == blockName {
-            // Step 3: now we're INSIDE that one block's body — ask it
-            // for its "bucket" attribute specifically.
-            innerSchema := &hcl.BodySchema{
-                Attributes: []hcl.AttributeSchema{{Name: "bucket", Required: true}},
-            }
-            innerContent, _, diags := block.Body.PartialContent(innerSchema)
-            if diags.HasErrors() {
-                return "", diags
-            }
+	inner, _, diags := content.Blocks[0].Body.PartialContent(&hcl.BodySchema{
+		Attributes: []hcl.AttributeSchema{{Name: "status", Required: true}},
+	})
+	if diags.HasErrors() {
+		return "", diags
+	}
 
-            attr := innerContent.Attributes["bucket"]
-
-            // Step 4: the attribute's value is an EXPRESSION
-            // (aws_s3_bucket.mybucket.id), not a plain string — this is
-            // the call that turns it into a traversal we can read.
-            traversal, diags := hcl.AbsTraversalForExpr(attr.Expr)
-            if diags.HasErrors() {
-                return "", diags
-            }
-
-            // traversal[0] = "aws_s3_bucket" (the resource type)
-            // traversal[1] = "mybucket"      (the resource NAME — what we want)
-            return traversal[1].(hcl.TraverseAttr).Name, nil
-        }
-    }
-
-    return "", fmt.Errorf("no resource named %s found in %s", blockName, filePath)
+	val, diags := inner.Attributes["status"].Expr.Value(nil)
+	if diags.HasErrors() {
+		return "", diags
+	}
+	if val.Type() != cty.String {
+		return "", fmt.Errorf("versioning status must be a string")
+	}
+	return val.AsString(), nil
 }
 
 func ParseBlueprint(dir string) ([]BucketConfig, error) {
-	module,diags := tfconfig.LoadModule(dir)
+	module, diags := tfconfig.LoadModule(dir)
 	if diags.HasErrors() {
-		return nil, fmt.Errorf("Failed to parse terraform: %s", diags.Error())
+		return nil, fmt.Errorf("failed to parse terraform: %s", diags.Error())
 	}
 
-	//internal map to hold bucket configs
+	// keyed by TERRAFORM label (how other resources reference a bucket)
 	bucketMap := map[string]*BucketConfig{}
 
-	//find all aws_s3_bucket resources and add them to the map
-	for _,resource := range module.ManagedResources {
-		if resource.Type == "aws_s3_bucket" {
-			bucketMap[resource.Name] = &BucketConfig{
-				BucketName: resource.Name,
-				IsEncrypted: false,
-			}
+	// pass 1: buckets
+	for _, resource := range module.ManagedResources {
+		if resource.Type != "aws_s3_bucket" {
+			continue
 		}
+		block, err := findResourceBlock(resource.Pos.Filename, resource.Type, resource.Name)
+		if err != nil {
+			return nil, err
+		}
+		realName, err := literalBucketName(block)
+		if err != nil {
+			return nil, err
+		}
+		bucketMap[resource.Name] = &BucketConfig{BucketName: realName}
 	}
 
-	//find encryption blocks and update matching buckets
+	// pass 2: encryption + versioning configs, linked via real references
 	for _, resource := range module.ManagedResources {
-		if resource.Type != "aws_s3_bucket_server_side_encryption_configuration" {
+		if resource.Type != "aws_s3_bucket_server_side_encryption_configuration" &&
+			resource.Type != "aws_s3_bucket_versioning" {
 			continue
 		}
 
-		realBucketName, err := resolveBucketReference(resource.Pos.Filename, resource.Name)
+		block, err := findResourceBlock(resource.Pos.Filename, resource.Type, resource.Name)
 		if err != nil {
-			return nil, fmt.Errorf("Failed to resolve bucket reference for %s: %v", resource.Name, err)
+			return nil, err
+		}
+		label, err := bucketReference(block)
+		if err != nil {
+			return nil, fmt.Errorf("resolving bucket reference for %s.%s: %w", resource.Type, resource.Name, err)
+		}
+		entry, exists := bucketMap[label]
+		if !exists {
+			continue // points at a bucket not defined in this module
 		}
 
-		if entry, exists := bucketMap[realBucketName]; exists {
+		switch resource.Type {
+		case "aws_s3_bucket_server_side_encryption_configuration":
 			entry.IsEncrypted = true
+		case "aws_s3_bucket_versioning":
+			status, err := versioningStatus(block)
+			if err != nil {
+				return nil, err
+			}
+			entry.IsVersioned = status == "Enabled"
 		}
 	}
 
-	//converting map to slice
 	var buckets []BucketConfig
-	for _,entry := range bucketMap {
+	for _, entry := range bucketMap {
 		buckets = append(buckets, *entry)
 	}
-	
+	// stable order so the API output doesn't shuffle between requests
+	sort.Slice(buckets, func(i, j int) bool { return buckets[i].BucketName < buckets[j].BucketName })
+
 	return buckets, nil
 }
