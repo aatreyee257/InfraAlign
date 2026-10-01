@@ -1,0 +1,1036 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>InfraAlign</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  /* Layout concept: header bar (identity, connection state, actions) fixed above
+     a stack of bucket cards; each card is one Terraform-defined bucket with a
+     row per drift check. Console/ops tool aesthetic — dark by default, amber
+     as the single accent (alert/observability convention), semantic status
+     colors kept separate from the accent. */
+  :root {
+    --bg: #12151a;
+    --surface: #1a1f27;
+    --surface-2: #212733;
+    --border: #2b323f;
+    --fg: #e8ebf0;
+    --fg-dim: #8b93a3;
+    --fg-faint: #5b6472;
+    --accent: #f0a83c;
+    --accent-dim: #7a5a26;
+    --ok: #4ec97f;
+    --ok-bg: #16261d;
+    --warn: #f0a83c;
+    --warn-bg: #2b2318;
+    --crit: #ec6a5e;
+    --crit-bg: #2b1e1c;
+    --font-ui: 'IBM Plex Sans', system-ui, -apple-system, sans-serif;
+    --font-mono: 'IBM Plex Mono', 'SF Mono', Consolas, monospace;
+    color-scheme: dark;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: var(--bg);
+    color: var(--fg);
+    font-family: var(--font-ui);
+    font-size: 14px;
+    line-height: 1.5;
+  }
+
+  body {
+    padding: 0 16px 48px;
+  }
+
+  .wrap {
+    max-width: 880px;
+    margin: 0 auto;
+  }
+
+  /* ---------- header ---------- */
+
+  header {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    background: var(--bg);
+    padding-top: 28px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 24px;
+  }
+
+  .header-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+
+  .brand {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    min-width: 0;
+  }
+
+  .brand h1 {
+    font-size: 20px;
+    font-weight: 700;
+    margin: 0;
+    letter-spacing: -0.01em;
+  }
+
+  .brand .tag {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--fg-faint);
+    letter-spacing: 0.02em;
+    white-space: nowrap;
+  }
+
+  .actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .conn {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--fg-dim);
+    padding: 6px 10px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--surface);
+  }
+
+  .dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--fg-faint);
+    flex-shrink: 0;
+  }
+  .dot.up { background: var(--ok); box-shadow: 0 0 0 3px var(--ok-bg); }
+  .dot.down { background: var(--crit); box-shadow: 0 0 0 3px var(--crit-bg); }
+  .dot.pending { background: var(--warn); animation: pulse 1.2s ease-in-out infinite; }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.35; }
+  }
+
+  button {
+    font-family: var(--font-ui);
+    font-size: 13px;
+    font-weight: 600;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--fg);
+    padding: 8px 14px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: background 0.12s, border-color 0.12s;
+  }
+  button:hover:not(:disabled) { background: var(--surface-2); border-color: var(--fg-faint); }
+  button:active:not(:disabled) { transform: translateY(1px); }
+  button:disabled { opacity: 0.45; cursor: not-allowed; }
+  button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  button.icon-btn {
+    padding: 8px 9px;
+    line-height: 0;
+  }
+
+  button.primary {
+    background: var(--accent);
+    color: #1a1206;
+    border-color: var(--accent);
+  }
+  button.primary:hover:not(:disabled) { background: #f5b658; }
+
+  button.danger-ready {
+    background: var(--warn-bg);
+    border-color: var(--accent-dim);
+    color: var(--accent);
+  }
+  button.danger-ready:hover:not(:disabled) { background: #382a15; }
+
+  /* ---------- settings panel ---------- */
+
+  .settings {
+    margin-top: 14px;
+    padding: 16px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    display: grid;
+    gap: 12px;
+  }
+  .settings[hidden] { display: none; }
+
+  .field {
+    display: grid;
+    gap: 5px;
+  }
+  .field label {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--fg-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .field input {
+    font-family: var(--font-mono);
+    font-size: 13px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--fg);
+    padding: 9px 10px;
+    border-radius: 6px;
+    width: 100%;
+  }
+  .field input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .field .hint {
+    font-size: 12px;
+    color: var(--fg-faint);
+  }
+  .settings-actions {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+  }
+
+  /* ---------- states ---------- */
+
+  .state-panel {
+    margin-top: 60px;
+    text-align: center;
+    color: var(--fg-dim);
+  }
+  .state-panel .big-icon {
+    font-family: var(--font-mono);
+    font-size: 32px;
+    color: var(--fg-faint);
+    margin-bottom: 12px;
+  }
+  .state-panel h2 {
+    font-size: 16px;
+    color: var(--fg);
+    margin: 0 0 6px;
+  }
+  .state-panel p {
+    max-width: 440px;
+    margin: 0 auto 18px;
+    font-size: 13px;
+  }
+  .state-panel code {
+    font-family: var(--font-mono);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    padding: 2px 6px;
+    border-radius: 4px;
+    color: var(--accent);
+  }
+  .state-panel pre {
+    display: inline-block;
+    text-align: left;
+    font-family: var(--font-mono);
+    font-size: 12.5px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px 16px;
+    color: var(--fg-dim);
+    margin: 0 0 18px;
+    overflow-x: auto;
+    max-width: 100%;
+  }
+
+  /* ---------- summary strip ---------- */
+
+  .summary {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 10px;
+    margin-bottom: 14px;
+  }
+  .stat {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 14px;
+    cursor: pointer;
+    text-align: left;
+    font-family: var(--font-ui);
+    transition: border-color 0.12s, background 0.12s, transform 0.08s;
+  }
+  .stat:hover { border-color: var(--fg-faint); }
+  .stat:active { transform: translateY(1px); }
+  .stat:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .stat.active { border-color: var(--accent); background: var(--surface-2); }
+  .stat .n {
+    font-family: var(--font-mono);
+    font-size: 22px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    line-height: 1.1;
+  }
+  .stat .l {
+    font-size: 12px;
+    color: var(--fg-dim);
+    margin-top: 3px;
+  }
+  .stat.ok .n { color: var(--ok); }
+  .stat.warn .n { color: var(--warn); }
+  .stat.crit .n { color: var(--crit); }
+
+  /* ---------- filter bar ---------- */
+
+  .filter-bar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 16px;
+    flex-wrap: wrap;
+  }
+  .search-input {
+    flex: 1;
+    min-width: 160px;
+    font-family: var(--font-mono);
+    font-size: 13px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--fg);
+    padding: 8px 12px;
+    border-radius: 6px;
+  }
+  .search-input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .search-input::placeholder { color: var(--fg-faint); }
+
+  .auto-refresh {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    font-size: 12px;
+    color: var(--fg-dim);
+    white-space: nowrap;
+  }
+  .auto-refresh select {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--fg);
+    padding: 5px 7px;
+    border-radius: 5px;
+  }
+  .switch {
+    position: relative;
+    width: 32px;
+    height: 18px;
+    flex-shrink: 0;
+  }
+  .switch input { opacity: 0; width: 0; height: 0; }
+  .switch .track {
+    position: absolute;
+    inset: 0;
+    background: var(--border);
+    border-radius: 999px;
+    transition: background 0.15s;
+    cursor: pointer;
+  }
+  .switch .track::before {
+    content: "";
+    position: absolute;
+    width: 14px;
+    height: 14px;
+    left: 2px;
+    top: 2px;
+    background: var(--fg-dim);
+    border-radius: 50%;
+    transition: transform 0.15s, background 0.15s;
+  }
+  .switch input:checked + .track { background: var(--accent-dim); }
+  .switch input:checked + .track::before { transform: translateX(14px); background: var(--accent); }
+  .switch input:focus-visible + .track { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  .countdown {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    color: var(--fg-faint);
+    min-width: 2ch;
+    text-align: right;
+  }
+
+  .no-match {
+    text-align: center;
+    color: var(--fg-faint);
+    font-size: 13px;
+    padding: 32px 16px;
+  }
+
+  /* ---------- bucket cards ---------- */
+
+  .bucket-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    margin-bottom: 14px;
+    overflow: hidden;
+  }
+
+  .bucket-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--border);
+    flex-wrap: wrap;
+    cursor: pointer;
+    user-select: none;
+  }
+  .bucket-card.collapsed .bucket-head { border-bottom: none; }
+  .bucket-head:hover { background: var(--surface-2); }
+  .bucket-head:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+  .bucket-head-left {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+  }
+
+  .chevron {
+    display: inline-block;
+    font-size: 10px;
+    color: var(--fg-faint);
+    transition: transform 0.15s;
+    flex-shrink: 0;
+  }
+  .bucket-card.collapsed .chevron { transform: rotate(-90deg); }
+
+  .bucket-name {
+    font-family: var(--font-mono);
+    font-size: 14px;
+    font-weight: 600;
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .bucket-head-right {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .bucket-checks {
+    display: grid;
+    grid-template-rows: 1fr;
+    transition: grid-template-rows 0.18s ease;
+  }
+  .bucket-card.collapsed .bucket-checks { grid-template-rows: 0fr; }
+  .bucket-checks > .inner { overflow: hidden; }
+
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    padding: 3px 8px;
+    border-radius: 999px;
+    white-space: nowrap;
+  }
+  .pill.compliant { background: var(--ok-bg); color: var(--ok); }
+  .pill.drifted { background: var(--warn-bg); color: var(--warn); }
+  .pill.missing_in_cloud { background: var(--crit-bg); color: var(--crit); }
+
+  .check-row {
+    display: grid;
+    grid-template-columns: 1fr auto auto auto;
+    gap: 14px;
+    align-items: center;
+    padding: 11px 16px;
+    border-bottom: 1px solid var(--border);
+    font-size: 13px;
+  }
+  .check-row:last-child { border-bottom: none; }
+
+  .check-name {
+    font-weight: 500;
+    min-width: 0;
+  }
+
+  .check-val {
+    font-family: var(--font-mono);
+    font-size: 12.5px;
+    color: var(--fg-dim);
+    white-space: nowrap;
+  }
+  .check-val .lbl {
+    color: var(--fg-faint);
+    margin-right: 4px;
+  }
+  .check-val.actual.mismatch { color: var(--crit); }
+  .check-val.actual.match { color: var(--ok); }
+
+  @media (max-width: 560px) {
+    .check-row {
+      grid-template-columns: 1fr;
+      gap: 4px;
+    }
+    .check-val { white-space: normal; }
+  }
+
+  .remediate-log {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    padding: 10px 16px;
+    background: var(--surface-2);
+    color: var(--fg-dim);
+    border-top: 1px solid var(--border);
+  }
+  .remediate-log.ok { color: var(--ok); }
+  .remediate-log.err { color: var(--crit); }
+
+  .footer-note {
+    margin-top: 28px;
+    font-size: 12px;
+    color: var(--fg-faint);
+    text-align: center;
+  }
+
+  @keyframes cardIn {
+    from { opacity: 0; transform: translateY(4px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  .bucket-card { animation: cardIn 0.2s ease both; }
+  @media (prefers-reduced-motion: reduce) {
+    .bucket-card { animation: none; }
+    .dot.pending { animation: none; }
+  }
+
+  /* ---------- toasts ---------- */
+
+  .toast-stack {
+    position: fixed;
+    right: 16px;
+    bottom: 16px;
+    z-index: 50;
+    display: flex;
+    flex-direction: column-reverse;
+    gap: 8px;
+    max-width: calc(100vw - 32px);
+  }
+  .toast {
+    font-size: 13px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--fg-faint);
+    color: var(--fg);
+    padding: 10px 14px;
+    border-radius: 8px;
+    box-shadow: 0 6px 18px rgba(0,0,0,0.35);
+    max-width: 340px;
+    animation: toastIn 0.18s ease both;
+  }
+  .toast.ok { border-left-color: var(--ok); }
+  .toast.err { border-left-color: var(--crit); }
+  .toast.leaving { animation: toastOut 0.16s ease both; }
+  @keyframes toastIn {
+    from { opacity: 0; transform: translateX(12px); }
+    to { opacity: 1; transform: translateX(0); }
+  }
+  @keyframes toastOut {
+    from { opacity: 1; transform: translateX(0); }
+    to { opacity: 0; transform: translateX(12px); }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <div class="header-row">
+      <div class="brand">
+        <h1>InfraAlign</h1>
+        <span class="tag">terraform ⇄ aws drift</span>
+      </div>
+      <div class="actions">
+        <span class="conn" id="connIndicator">
+          <span class="dot pending" id="connDot"></span>
+          <span id="connText">connecting…</span>
+        </span>
+        <button class="icon-btn" id="settingsBtn" title="Settings" aria-label="Settings">⚙</button>
+        <button id="refreshBtn" title="Re-run scan (shortcut: r)">↻ Refresh</button>
+      </div>
+    </div>
+
+    <div class="filter-bar">
+      <input class="search-input" id="searchInput" type="text" placeholder="Filter by bucket name… (press / to focus)">
+      <label class="auto-refresh">
+        <span class="switch">
+          <input type="checkbox" id="autoRefreshToggle">
+          <span class="track" aria-hidden="true"></span>
+        </span>
+        Auto-refresh
+        <select id="autoRefreshInterval">
+          <option value="15">15s</option>
+          <option value="30" selected>30s</option>
+          <option value="60">60s</option>
+        </select>
+        <span class="countdown" id="countdown"></span>
+      </label>
+    </div>
+
+    <div class="settings" id="settingsPanel" hidden>
+      <div class="field">
+        <label for="apiBaseInput">API base URL</label>
+        <input id="apiBaseInput" type="text" spellcheck="false" placeholder="http://localhost:8080">
+        <span class="hint">Where your <code>go run ./backend/cmd/server serve</code> is listening.</span>
+      </div>
+      <div class="field">
+        <label for="apiKeyInput">API key</label>
+        <input id="apiKeyInput" type="password" spellcheck="false" placeholder="INFRAALIGN_API_KEY value">
+        <span class="hint">Only needed to trigger remediation — required for the <code>POST /api/remediate</code> route, not for viewing drift. Stored in this browser only.</span>
+      </div>
+      <div class="settings-actions">
+        <button id="settingsCancel">Cancel</button>
+        <button class="primary" id="settingsSave">Save</button>
+      </div>
+    </div>
+  </header>
+
+  <div id="app">
+    <div class="state-panel">
+      <div class="big-icon">···</div>
+      <h2>Scanning</h2>
+      <p>Parsing Terraform, querying AWS, comparing state.</p>
+    </div>
+  </div>
+
+  <div class="footer-note">Re-runs the full parse → scan → detect pipeline on every refresh and after every remediation.</div>
+
+</div>
+
+<div class="toast-stack" id="toastStack" aria-live="polite"></div>
+
+<script>
+(function () {
+  "use strict";
+
+  var DEFAULTS = { apiBase: "http://localhost:8080", apiKey: "" };
+  var STATUSES = ["compliant", "drifted", "missing_in_cloud"];
+
+  function loadConfig() {
+    var cfg = Object.assign({}, DEFAULTS);
+    try {
+      var raw = localStorage.getItem("infraalign.config");
+      if (raw) Object.assign(cfg, JSON.parse(raw));
+    } catch (e) { /* private mode / blocked storage — fall back to defaults */ }
+    return cfg;
+  }
+
+  function saveConfig(cfg) {
+    try { localStorage.setItem("infraalign.config", JSON.stringify(cfg)); }
+    catch (e) { /* best effort only */ }
+  }
+
+  var state = {
+    config: loadConfig(),
+    differences: null,
+    lastError: null,
+    remediating: {},        // bucketName -> true while a remediation call is in flight
+    logs: {},               // bucketName -> {ok: bool, text: string}
+    statusFilter: null,     // null = all, or one of STATUSES
+    searchQuery: "",
+    collapsedOverride: {}   // bucketName -> bool, only set once the user clicks a card
+  };
+
+  var autoRefresh = { enabled: false, intervalSec: 30, remaining: 30, timer: null };
+
+  var app = document.getElementById("app");
+  var connDot = document.getElementById("connDot");
+  var connText = document.getElementById("connText");
+  var refreshBtn = document.getElementById("refreshBtn");
+  var settingsBtn = document.getElementById("settingsBtn");
+  var settingsPanel = document.getElementById("settingsPanel");
+  var apiBaseInput = document.getElementById("apiBaseInput");
+  var apiKeyInput = document.getElementById("apiKeyInput");
+  var searchInput = document.getElementById("searchInput");
+  var autoRefreshToggle = document.getElementById("autoRefreshToggle");
+  var autoRefreshInterval = document.getElementById("autoRefreshInterval");
+  var countdownEl = document.getElementById("countdown");
+  var toastStack = document.getElementById("toastStack");
+
+  function pushToast(ok, text) {
+    var el = document.createElement("div");
+    el.className = "toast " + (ok ? "ok" : "err");
+    el.textContent = text;
+    toastStack.appendChild(el);
+    setTimeout(function () {
+      el.classList.add("leaving");
+      setTimeout(function () { el.remove(); }, 180);
+    }, 4000);
+  }
+
+  function setConn(mode, text) {
+    connDot.className = "dot " + mode;
+    connText.textContent = text;
+  }
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
+
+  function statusLabel(status) {
+    if (status === "compliant") return "Compliant";
+    if (status === "drifted") return "Drifted";
+    if (status === "missing_in_cloud") return "Missing";
+    return status;
+  }
+
+  function groupByBucket(diffs) {
+    var order = [];
+    var map = {};
+    diffs.forEach(function (d) {
+      if (!map[d.bucket_name]) {
+        map[d.bucket_name] = [];
+        order.push(d.bucket_name);
+      }
+      map[d.bucket_name].push(d);
+    });
+    return order.map(function (name) { return { bucket: name, checks: map[name] }; });
+  }
+
+  function bucketWorstStatus(checks) {
+    if (checks.some(function (c) { return c.status === "missing_in_cloud"; })) return "missing_in_cloud";
+    if (checks.some(function (c) { return c.status === "drifted"; })) return "drifted";
+    return "compliant";
+  }
+
+  function renderLoading() {
+    app.innerHTML =
+      '<div class="state-panel" id="stateLoading">' +
+      '<div class="big-icon">···</div>' +
+      '<h2>Scanning</h2>' +
+      '<p>Parsing Terraform, querying AWS, comparing state.</p>' +
+      '</div>';
+  }
+
+  function renderUnreachable(errMsg) {
+    app.innerHTML =
+      '<div class="state-panel">' +
+      '<div class="big-icon">⚠</div>' +
+      '<h2>Can’t reach the InfraAlign API</h2>' +
+      '<p>Checked <code>' + escapeHtml(state.config.apiBase) + '/api/drift</code> and got no response. ' +
+      'Start the backend, then hit Refresh.</p>' +
+      '<pre>go run ./backend/cmd/server serve</pre>' +
+      '<p style="margin-top:-8px">' + (errMsg ? escapeHtml(errMsg) : "") + '</p>' +
+      '</div>';
+  }
+
+  function renderEmpty() {
+    app.innerHTML =
+      '<div class="state-panel">' +
+      '<div class="big-icon">–</div>' +
+      '<h2>No resources found</h2>' +
+      '<p>The API responded, but the drift report is empty. Check that <code>terraform-samples</code> has resources and the AWS credentials the server is using can see your bucket.</p>' +
+      '</div>';
+  }
+
+  function renderData() {
+    var diffs = state.differences;
+    var counts = { compliant: 0, drifted: 0, missing_in_cloud: 0 };
+    diffs.forEach(function (d) { counts[d.status] = (counts[d.status] || 0) + 1; });
+
+    var allGroups = groupByBucket(diffs);
+
+    var query = state.searchQuery.trim().toLowerCase();
+    var groups = allGroups.filter(function (g) {
+      if (query && g.bucket.toLowerCase().indexOf(query) === -1) return false;
+      if (state.statusFilter && bucketWorstStatus(g.checks) !== state.statusFilter) return false;
+      return true;
+    });
+
+    var html = "";
+
+    html += '<div class="summary">';
+    STATUSES.forEach(function (s) {
+      var cls = s === "compliant" ? "ok" : s === "drifted" ? "warn" : "crit";
+      var active = state.statusFilter === s;
+      html += '<button class="stat ' + cls + (active ? " active" : "") + '" data-stat-filter="' + s + '" ' +
+        'aria-pressed="' + active + '">' +
+        '<div class="n">' + counts[s] + '</div><div class="l">' + statusLabel(s) + (s === "missing_in_cloud" ? " in AWS" : "") + '</div>' +
+        '</button>';
+    });
+    html += '</div>';
+
+    if (groups.length === 0) {
+      html += '<div class="no-match">No buckets match the current filter.</div>';
+    }
+
+    groups.forEach(function (g) {
+      var worst = bucketWorstStatus(g.checks);
+      var hasDrifted = g.checks.some(function (c) { return c.status === "drifted"; });
+      var isRemediating = !!state.remediating[g.bucket];
+      var log = state.logs[g.bucket];
+      var override = state.collapsedOverride[g.bucket];
+      var collapsed = override !== undefined ? override : (worst === "compliant");
+
+      html += '<div class="bucket-card' + (collapsed ? " collapsed" : "") + '" data-bucket="' + escapeHtml(g.bucket) + '">';
+      html += '<div class="bucket-head" data-toggle="' + escapeHtml(g.bucket) + '" role="button" tabindex="0" aria-expanded="' + (!collapsed) + '">';
+      html += '<div class="bucket-head-left"><span class="chevron">▾</span>';
+      html += '<div class="bucket-name">' + escapeHtml(g.bucket) + '</div></div>';
+      html += '<div class="bucket-head-right">';
+      html += '<span class="pill ' + worst + '">' + statusLabel(worst) + '</span>';
+      if (hasDrifted) {
+        html += '<button data-remediate="' + escapeHtml(g.bucket) + '" class="danger-ready" ' +
+          (isRemediating ? "disabled" : "") + '>' +
+          (isRemediating ? "Remediating…" : "Remediate") + '</button>';
+      }
+      html += '</div></div>';
+
+      html += '<div class="bucket-checks"><div class="inner">';
+      g.checks.forEach(function (c) {
+        var mismatch = c.expected_val !== c.actual_val;
+        html += '<div class="check-row">';
+        html += '<div class="check-name">' + escapeHtml(c.attribute_name) + '</div>';
+        html += '<div class="check-val"><span class="lbl">expected</span>' + escapeHtml(c.expected_val) + '</div>';
+        html += '<div class="check-val actual ' + (mismatch ? "mismatch" : "match") + '">' +
+          '<span class="lbl">actual</span>' + escapeHtml(c.actual_val) + '</div>';
+        html += '<span class="pill ' + c.status + '">' + statusLabel(c.status) + '</span>';
+        html += '</div>';
+      });
+      if (log) {
+        html += '<div class="remediate-log ' + (log.ok ? "ok" : "err") + '">' + escapeHtml(log.text) + '</div>';
+      }
+      html += '</div></div>';
+
+      html += '</div>';
+    });
+
+    app.innerHTML = html;
+
+    app.querySelectorAll("[data-remediate]").forEach(function (btn) {
+      btn.addEventListener("click", function (ev) {
+        ev.stopPropagation();
+        remediate(btn.getAttribute("data-remediate"));
+      });
+    });
+
+    app.querySelectorAll("[data-stat-filter]").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        var s = btn.getAttribute("data-stat-filter");
+        state.statusFilter = state.statusFilter === s ? null : s;
+        render();
+      });
+    });
+
+    app.querySelectorAll("[data-toggle]").forEach(function (headEl) {
+      function toggle() {
+        var bucket = headEl.getAttribute("data-toggle");
+        var card = headEl.closest(".bucket-card");
+        var currentlyCollapsed = card.classList.contains("collapsed");
+        state.collapsedOverride[bucket] = !currentlyCollapsed;
+        render();
+      }
+      headEl.addEventListener("click", toggle);
+      headEl.addEventListener("keydown", function (ev) {
+        if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); toggle(); }
+      });
+    });
+  }
+
+  function render() {
+    if (state.lastError) { renderUnreachable(state.lastError); return; }
+    if (state.differences === null) { renderLoading(); return; }
+    if (state.differences.length === 0) { renderEmpty(); return; }
+    renderData();
+  }
+
+  function fetchDrift() {
+    setConn("pending", "scanning…");
+    refreshBtn.disabled = true;
+
+    fetch(state.config.apiBase + "/api/drift")
+      .then(function (res) {
+        if (!res.ok) throw new Error("HTTP " + res.status);
+        return res.json();
+      })
+      .then(function (data) {
+        state.differences = data || [];
+        state.lastError = null;
+        setConn("up", "connected");
+        render();
+      })
+      .catch(function (err) {
+        state.lastError = err.message || String(err);
+        setConn("down", "unreachable");
+        render();
+      })
+      .finally(function () {
+        refreshBtn.disabled = false;
+      });
+  }
+
+  function remediate(bucketName) {
+    if (!state.config.apiKey) {
+      state.logs[bucketName] = { ok: false, text: "No API key set. Open Settings (⚙) and enter INFRAALIGN_API_KEY." };
+      render();
+      return;
+    }
+
+    state.remediating[bucketName] = true;
+    delete state.logs[bucketName];
+    render();
+
+    fetch(state.config.apiBase + "/api/remediate/" + encodeURIComponent(bucketName), {
+      method: "POST",
+      headers: { "X-API-Key": state.config.apiKey }
+    })
+      .then(function (res) {
+        if (res.status === 401) throw new Error("Unauthorized — check the API key in Settings.");
+        if (!res.ok) return res.text().then(function (t) { throw new Error(t || ("HTTP " + res.status)); });
+        return res.json();
+      })
+      .then(function (fixed) {
+        var n = (fixed || []).length;
+        var text = n > 0
+          ? "Fixed " + n + " attribute" + (n === 1 ? "" : "s") + " on " + bucketName
+          : "Nothing to remediate on " + bucketName;
+        state.logs[bucketName] = { ok: true, text: text + " — re-scanning…" };
+        pushToast(true, text);
+        delete state.remediating[bucketName];
+        render();
+        fetchDrift();
+      })
+      .catch(function (err) {
+        var msg = err.message || String(err);
+        state.logs[bucketName] = { ok: false, text: msg };
+        pushToast(false, bucketName + ": " + msg);
+        delete state.remediating[bucketName];
+        render();
+      });
+  }
+
+  // ---------- settings panel ----------
+
+  function openSettings() {
+    apiBaseInput.value = state.config.apiBase;
+    apiKeyInput.value = state.config.apiKey;
+    settingsPanel.hidden = false;
+  }
+  function closeSettings() { settingsPanel.hidden = true; }
+
+  settingsBtn.addEventListener("click", function () {
+    settingsPanel.hidden ? openSettings() : closeSettings();
+  });
+  document.getElementById("settingsCancel").addEventListener("click", closeSettings);
+  document.getElementById("settingsSave").addEventListener("click", function () {
+    state.config.apiBase = (apiBaseInput.value || DEFAULTS.apiBase).trim().replace(/\/+$/, "");
+    state.config.apiKey = apiKeyInput.value;
+    saveConfig(state.config);
+    closeSettings();
+    fetchDrift();
+  });
+
+  refreshBtn.addEventListener("click", function () {
+    resetCountdown();
+    fetchDrift();
+  });
+
+  // ---------- search ----------
+
+  var searchDebounce = null;
+  searchInput.addEventListener("input", function () {
+    clearTimeout(searchDebounce);
+    var value = searchInput.value;
+    searchDebounce = setTimeout(function () {
+      state.searchQuery = value;
+      render();
+    }, 120);
+  });
+
+  // ---------- auto-refresh ----------
+
+  function resetCountdown() {
+    autoRefresh.remaining = autoRefresh.intervalSec;
+    updateCountdownDisplay();
+  }
+
+  function updateCountdownDisplay() {
+    countdownEl.textContent = autoRefresh.enabled ? autoRefresh.remaining + "s" : "";
+  }
+
+  function tick() {
+    if (!autoRefresh.enabled) return;
+    autoRefresh.remaining -= 1;
+    if (autoRefresh.remaining <= 0) {
+      resetCountdown();
+      fetchDrift();
+    } else {
+      updateCountdownDisplay();
+    }
+  }
+
+  autoRefreshToggle.addEventListener("change", function () {
+    autoRefresh.enabled = autoRefreshToggle.checked;
+    resetCountdown();
+  });
+
+  autoRefreshInterval.addEventListener("change", function () {
+    autoRefresh.intervalSec = parseInt(autoRefreshInterval.value, 10) || 30;
+    resetCountdown();
+  });
+
+  if (autoRefresh.timer) clearInterval(autoRefresh.timer);
+  autoRefresh.timer = setInterval(tick, 1000);
+
+  // ---------- keyboard shortcuts ----------
+  // "r" re-runs the scan, "/" focuses search — both skipped while typing in a field.
+
+  document.addEventListener("keydown", function (ev) {
+    var tag = (document.activeElement && document.activeElement.tagName) || "";
+    var typing = tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA";
+
+    if (!typing && (ev.key === "r" || ev.key === "R")) {
+      ev.preventDefault();
+      resetCountdown();
+      fetchDrift();
+    } else if (!typing && ev.key === "/") {
+      ev.preventDefault();
+      searchInput.focus();
+    } else if (ev.key === "Escape" && document.activeElement === searchInput) {
+      searchInput.value = "";
+      state.searchQuery = "";
+      searchInput.blur();
+      render();
+    }
+  });
+
+  fetchDrift();
+})();
+</script>
+</body>
+</html>
