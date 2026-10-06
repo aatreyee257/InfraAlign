@@ -191,11 +191,3 @@ terraform-samples/
 └── main.tf                    # sample Terraform config used as the blueprint source
 ```
 
-## Roadmap
-
-- [ ] Additional `Check` implementations (public access block, tagging, more resource types beyond S3)
-- [ ] Distinguish remediation behavior for `Missing` resources (can't "fix" the encryption of a bucket that doesn't exist — the API currently only remediates `Drifted` status for this reason, but a real creation path is still unhandled)
-- [ ] CLI polish — subcommands and flags (e.g. via `cobra`) instead of a single `serve`/default-mode argv check and env-var-driven config
-- [ ] Automated tests for `DetectDrift` and HCL reference resolution
-- [ ] Harden the API beyond a single shared key if this is ever exposed outside localhost
-- [ ] Cache or schedule `runDetection()` in the API instead of re-running the full parse/scan on every request
