@@ -14,7 +14,7 @@ import (
 
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == "serve" {
-		if err := api.Start(":8080"); err != nil {
+		if err := api.Start("127.0.0.1:8080"); err != nil {
 			log.Fatalf("server failed: %v", err)
 		}
 		return

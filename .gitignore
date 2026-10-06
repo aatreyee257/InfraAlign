@@ -11,3 +11,7 @@ vendor/
 
 # AWS
 .env
+
+# Build output and OS files
+backend/cmd/server/server
+.DS_Store
