@@ -3,8 +3,14 @@
 A Go CLI and HTTP API that detects drift between Terraform-defined infrastructure and the real state of your AWS account, with Slack alerting, auto-remediation, and a local web dashboard.
 
 InfraAlign parses your Terraform HCL to build a "blueprint" of what your infrastructure *should* look like, queries AWS directly to see what it *actually* looks like, diffs the two per-attribute, and reports (or fixes) the difference — from the terminal, over HTTP, or from the dashboard.
+
+**COMPLIANT**
+
 <img width="1071" height="466" alt="Screenshot 2026-10-06 at 18 47 22" src="https://github.com/user-attachments/assets/6e544c41-afbc-4cee-a7cc-6672310379ab" />
 
+**DRIFTED**
+
+<img width="1900" height="938" alt="image" src="https://github.com/user-attachments/assets/4cfabfc0-6d71-4f98-a2ce-3a00d7ec29f0" />
 
 ## How it works
 
